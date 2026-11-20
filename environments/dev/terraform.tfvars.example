@@ -1,0 +1,15 @@
+project_name                = "azinfra"
+environment                 = "dev"
+location                    = "eastus"
+app_service_sku             = "B1"
+key_vault_sku               = "standard"
+storage_account_tier        = "Standard"
+storage_account_replication = "LRS"
+
+tags = {
+  Project     = "Azure Infrastructure Automation"
+  Environment = "Development"
+  ManagedBy   = "Terraform"
+  CostCenter  = "Engineering-Dev"
+  Owner       = "DevOps Team"
+}

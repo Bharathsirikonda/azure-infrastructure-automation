@@ -1,0 +1,182 @@
+name: $(Build.DefinitionName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  - name: terraformVersion
+    value: '1.9.8'
+  - name: azureServiceConnection
+    value: 'azure-rm-service-connection'
+  - name: backendResourceGroup
+    value: 'rg-azinfra-bootstrap-eastus'
+  - name: backendStorageAccount
+    value: 'stazinfrabootstrapstate'
+  - name: devContainer
+    value: 'tfstate-dev'
+  - name: devStateKey
+    value: 'dev.terraform.tfstate'
+  - name: prodContainer
+    value: 'tfstate-prod'
+  - name: prodStateKey
+    value: 'prod.terraform.tfstate'
+
+stages:
+  # =========================================================================
+  # STAGE 1: Code Quality, Linting & Syntax Validation
+  # =========================================================================
+  - stage: Validate
+    displayName: 'Code Quality & Validation'
+    jobs:
+      - job: Static_Validation
+        displayName: 'Format, Init & Validate'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - template: templates/terraform-install.yml
+            parameters:
+              terraformVersion: $(terraformVersion)
+
+          - template: templates/terraform-validate.yml
+            parameters:
+              workingDirectory: 'environments/dev'
+
+          - script: |
+              echo "Validating Production environment..."
+              cd environments/prod
+              terraform init -backend=false
+              terraform validate
+            displayName: 'Terraform Validate (environments/prod)'
+
+  # =========================================================================
+  # STAGE 2: Development Infrastructure Plan
+  # =========================================================================
+  - stage: Plan_Dev
+    displayName: 'Plan Development'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: Plan_Dev_Job
+        displayName: 'Generate Dev Plan'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - template: templates/terraform-install.yml
+            parameters:
+              terraformVersion: $(terraformVersion)
+
+          - template: templates/terraform-plan.yml
+            parameters:
+              environment: 'dev'
+              workingDirectory: 'environments/dev'
+              serviceConnection: $(azureServiceConnection)
+              backendResourceGroup: $(backendResourceGroup)
+              backendStorageAccount: $(backendStorageAccount)
+              backendContainer: $(devContainer)
+              backendKey: $(devStateKey)
+
+  # =========================================================================
+  # STAGE 3: Development Infrastructure Apply
+  # =========================================================================
+  - stage: Apply_Dev
+    displayName: 'Apply Development'
+    dependsOn: Plan_Dev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Apply_Dev_Deployment
+        displayName: 'Deploy Dev Infrastructure'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'development'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - template: templates/terraform-install.yml
+                  parameters:
+                    terraformVersion: $(terraformVersion)
+
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: 'dev'
+                    workingDirectory: 'environments/dev'
+                    serviceConnection: $(azureServiceConnection)
+                    backendResourceGroup: $(backendResourceGroup)
+                    backendStorageAccount: $(backendStorageAccount)
+                    backendContainer: $(devContainer)
+                    backendKey: $(devStateKey)
+
+  # =========================================================================
+  # STAGE 4: Production Infrastructure Plan
+  # =========================================================================
+  - stage: Plan_Prod
+    displayName: 'Plan Production'
+    dependsOn: Apply_Dev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Plan_Prod_Job
+        displayName: 'Generate Prod Plan'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - template: templates/terraform-install.yml
+            parameters:
+              terraformVersion: $(terraformVersion)
+
+          - template: templates/terraform-plan.yml
+            parameters:
+              environment: 'prod'
+              workingDirectory: 'environments/prod'
+              serviceConnection: $(azureServiceConnection)
+              backendResourceGroup: $(backendResourceGroup)
+              backendStorageAccount: $(backendStorageAccount)
+              backendContainer: $(prodContainer)
+              backendKey: $(prodStateKey)
+
+  # =========================================================================
+  # STAGE 5: Production Infrastructure Apply (Requires Explicit Approval)
+  # =========================================================================
+  - stage: Apply_Prod
+    displayName: 'Apply Production'
+    dependsOn: Plan_Prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Apply_Prod_Deployment
+        displayName: 'Deploy Prod Infrastructure (Approval Required)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        # The 'production' environment in Azure DevOps enforces pre-deployment manual approval checks
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - template: templates/terraform-install.yml
+                  parameters:
+                    terraformVersion: $(terraformVersion)
+
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: 'prod'
+                    workingDirectory: 'environments/prod'
+                    serviceConnection: $(azureServiceConnection)
+                    backendResourceGroup: $(backendResourceGroup)
+                    backendStorageAccount: $(backendStorageAccount)
+                    backendContainer: $(prodContainer)
+                    backendKey: $(prodStateKey)

@@ -1,0 +1,18 @@
+parameters:
+  - name: workingDirectory
+    type: string
+
+steps:
+  - script: |
+      echo "Validating Terraform code formatting across repository..."
+      terraform fmt -check -recursive
+    displayName: 'Terraform Format Check'
+    workingDirectory: $(Build.SourcesDirectory)
+
+  - script: |
+      echo "Initializing Terraform without remote backend for static validation..."
+      terraform init -backend=false
+      echo "Validating Terraform configuration syntax and schema..."
+      terraform validate
+    displayName: 'Terraform Init & Validate (${{ parameters.workingDirectory }})'
+    workingDirectory: ${{ parameters.workingDirectory }}

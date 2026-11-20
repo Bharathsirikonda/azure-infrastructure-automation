@@ -1,0 +1,54 @@
+parameters:
+  - name: environment
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: backendResourceGroup
+    type: string
+  - name: backendStorageAccount
+    type: string
+  - name: backendContainer
+    type: string
+  - name: backendKey
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Terraform Init & Plan (${{ parameters.environment }})'
+    inputs:
+      azureSubscription: '${{ parameters.serviceConnection }}'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      workingDirectory: '${{ parameters.workingDirectory }}'
+      inlineScript: |
+        set -euo pipefail
+        
+        echo "Retrieving storage account access key for Terraform backend..."
+        ARM_ACCESS_KEY=$(az storage account keys list \
+          --resource-group "${{ parameters.backendResourceGroup }}" \
+          --account-name "${{ parameters.backendStorageAccount }}" \
+          --query '[0].value' -o tsv)
+        export ARM_ACCESS_KEY
+        
+        echo "Initializing Terraform remote backend..."
+        terraform init \
+          -input=false \
+          -backend-config="resource_group_name=${{ parameters.backendResourceGroup }}" \
+          -backend-config="storage_account_name=${{ parameters.backendStorageAccount }}" \
+          -backend-config="container_name=${{ parameters.backendContainer }}" \
+          -backend-config="key=${{ parameters.backendKey }}"
+        
+        echo "Generating Terraform execution plan for ${{ parameters.environment }}..."
+        terraform plan \
+          -input=false \
+          -var-file="${{ parameters.environment }}.tfvars" \
+          -out="$(Build.ArtifactStagingDirectory)/${{ parameters.environment }}.tfplan"
+        
+        # Save a human-readable text version of the plan for review in pipeline logs
+        terraform show -no-color "$(Build.ArtifactStagingDirectory)/${{ parameters.environment }}.tfplan" > "$(Build.ArtifactStagingDirectory)/${{ parameters.environment }}-plan.txt"
+
+  - publish: '$(Build.ArtifactStagingDirectory)'
+    artifact: 'terraform-plan-${{ parameters.environment }}'
+    displayName: 'Publish Terraform Plan Artifact (${{ parameters.environment }})'

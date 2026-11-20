@@ -1,0 +1,11 @@
+project_name    = "azinfra"
+environment     = "bootstrap"
+location        = "eastus"
+container_names = ["tfstate-dev", "tfstate-prod"]
+
+tags = {
+  Project     = "Azure Infrastructure Automation"
+  Environment = "Bootstrap"
+  ManagedBy   = "Terraform"
+  Owner       = "DevOps Team"
+}

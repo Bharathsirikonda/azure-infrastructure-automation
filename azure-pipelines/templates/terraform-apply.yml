@@ -1,0 +1,58 @@
+parameters:
+  - name: environment
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: backendResourceGroup
+    type: string
+  - name: backendStorageAccount
+    type: string
+  - name: backendContainer
+    type: string
+  - name: backendKey
+    type: string
+
+steps:
+  - download: current
+    artifact: 'terraform-plan-${{ parameters.environment }}'
+    displayName: 'Download Plan Artifact (${{ parameters.environment }})'
+
+  - task: AzureCLI@2
+    displayName: 'Terraform Apply (${{ parameters.environment }})'
+    inputs:
+      azureSubscription: '${{ parameters.serviceConnection }}'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      workingDirectory: '${{ parameters.workingDirectory }}'
+      inlineScript: |
+        set -euo pipefail
+        
+        echo "Retrieving storage account access key for Terraform backend..."
+        ARM_ACCESS_KEY=$(az storage account keys list \
+          --resource-group "${{ parameters.backendResourceGroup }}" \
+          --account-name "${{ parameters.backendStorageAccount }}" \
+          --query '[0].value' -o tsv)
+        export ARM_ACCESS_KEY
+        
+        echo "Initializing Terraform remote backend..."
+        terraform init \
+          -input=false \
+          -backend-config="resource_group_name=${{ parameters.backendResourceGroup }}" \
+          -backend-config="storage_account_name=${{ parameters.backendStorageAccount }}" \
+          -backend-config="container_name=${{ parameters.backendContainer }}" \
+          -backend-config="key=${{ parameters.backendKey }}"
+        
+        PLAN_FILE="$(Pipeline.Workspace)/terraform-plan-${{ parameters.environment }}/${{ parameters.environment }}.tfplan"
+        
+        echo "Applying approved execution plan..."
+        terraform apply -input=false "$PLAN_FILE"
+        
+        echo "Retrieving Terraform deployment outputs..."
+        terraform output
+        
+        # Export key deployment URLs for downstream jobs/notifications
+        APP_URL=$(terraform output -raw app_service_url 2>/dev/null || echo "")
+        echo "Deployed App URL: $APP_URL"
+        echo "##vso[task.setvariable variable=DEPLOYED_APP_URL]$APP_URL"
